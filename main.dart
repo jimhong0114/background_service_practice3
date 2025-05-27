@@ -10,26 +10,31 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-FlutterLocalNotificationsPlugin();
+FlutterLocalNotificationsPlugin();//建立通知插件的全域實例
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized();//初始化 Flutter 綁定，保證可以在 main 執行前使用平台通訊
 
-  final hasPermission = await _checkNotificationPermissionAtStartup();
+  final hasPermission = await _checkNotificationPermissionAtStartup();//檢查通知權限
 
+  ///如果沒權限就跳轉到提示畫面
   if (!hasPermission) {
     runApp(const PermissionDeniedApp());
     return;
   }
 
-  await _initializeApp();
-  runApp(const MyApp());
+  await _initializeApp();//初始化應用
+  runApp(const MyApp());//啟動 UI
 }
 
 Future<bool> _checkNotificationPermissionAtStartup() async {
+
+  ///如果是 Android，取得裝置 SDK 版本
   if (Platform.isAndroid) {
     final deviceInfo = DeviceInfoPlugin();
     final androidInfo = await deviceInfo.androidInfo;
+
+    ///Android 13+ 需要請求通知權限，否則直接通過
     if (androidInfo.version.sdkInt >= 33) {
       final status = await Permission.notification.status;
       if (!status.isGranted) {
@@ -42,9 +47,11 @@ Future<bool> _checkNotificationPermissionAtStartup() async {
 }
 
 Future<void> _initializeApp() async {
-  // 取得裝置名稱
-  final deviceInfo = DeviceInfoPlugin();
-  String? device;
+
+  final deviceInfo = DeviceInfoPlugin();// 取得裝置資訊以識別裝置名稱
+  String? device;// 取得裝置資訊以識別裝置名稱
+
+  ///依平台選擇裝置名稱
   if (Platform.isAndroid) {
     final androidInfo = await deviceInfo.androidInfo;
     device = androidInfo.model;
@@ -53,10 +60,10 @@ Future<void> _initializeApp() async {
     device = iosInfo.utsname.machine;
   }
 
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString("device_name", device ?? "unknown");
+  final prefs = await SharedPreferences.getInstance();//儲存裝置名稱到本地偏好設定
+  await prefs.setString("device_name", device ?? "unknown");//儲存裝置名稱到本地偏好設定
 
-  // 初始化通知插件
+  /// 初始化通知插件
   await flutterLocalNotificationsPlugin.initialize(
     const InitializationSettings(
       iOS: DarwinInitializationSettings(),
@@ -64,7 +71,7 @@ Future<void> _initializeApp() async {
     ),
   );
 
-  // 建立通知頻道
+  /// 定義 Android 的通知頻道
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'my_foreground',
     'MY FOREGROUND SERVICE',
@@ -72,20 +79,23 @@ Future<void> _initializeApp() async {
     importance: Importance.max,
   );
 
+
   await flutterLocalNotificationsPlugin
       .resolvePlatformSpecificImplementation<
       AndroidFlutterLocalNotificationsPlugin>()
-      ?.createNotificationChannel(channel);
+      ?.createNotificationChannel(channel);//建立通知頻道（僅 Android）
 
-  // 初始化背景服務
-  await initializeService();
 
+  await initializeService();// 初始化背景服務
+
+  ///當服務啟動時，傳送裝置名稱給背景 Isolate
   FlutterBackgroundService().on('onServiceStarted').listen((event) {
     FlutterBackgroundService().invoke('setDevice', {
       'device': device ?? 'unknown',
     });
   });
 }
+
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
@@ -100,23 +110,23 @@ Future<void> initializeService() async {
       initialNotificationContent: 'Initializing',
       foregroundServiceNotificationId: 888,
       foregroundServiceTypes: [AndroidForegroundType.location],
-    ),
+    ),//Android 設定：服務開機啟動、前景模式、通知樣式等
     iosConfiguration: IosConfiguration(
       autoStart: true,
       onForeground: onStart,
-    ),
+    ),//iOS 設定：僅支援前景執行
   );
 }
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) {
-  service.invoke('onServiceStarted');
+  service.invoke('onServiceStarted');//傳送服務啟動通知給主程式
 
   String device = "unknown";
 
   service.on('setDevice').listen((event) {
     device = event?['device'] ?? "unknown";
-  });
+  });//監聽主程式傳來的裝置名稱
 
   if (service is AndroidServiceInstance) {
     service.on('setAsForeground').listen((_) {
@@ -130,17 +140,19 @@ void onStart(ServiceInstance service) {
 
   service.on('stopService').listen((_) {
     service.stopSelf();
-  });
+  });//可切換前/背景模式或停止服務
 
-  Future.delayed(const Duration(seconds: 1), () {
-    Timer.periodic(const Duration(seconds: 1), (timer) async {
+  Future.delayed(const Duration(seconds: 1), () {  //延遲1秒後
+    Timer.periodic(const Duration(seconds: 1), (timer) async {  //每秒執行一次
+
+      ///更新通知與資料，並傳送給主程式
       try {
         if (service is AndroidServiceInstance) {
           final androidService = service as AndroidServiceInstance;
 
           if (!await androidService.isForegroundService()) return;
 
-          // ➕ 加入權限檢查避免崩潰
+
           if (Platform.isAndroid &&
               !(await Permission.notification.isGranted)) {
             return;
@@ -161,11 +173,12 @@ void onStart(ServiceInstance service) {
         final logs = sp.getStringList('log') ?? [];
         logs.add("[ERROR] ${DateTime.now()} $e");
         await sp.setStringList('log', logs);
-      }
+      }//若有錯誤，將錯誤記錄儲存在偏好設定中供 UI 顯示
     });
   });
 }
 
+///主畫面 Stateful Widget，控制服務的啟動與停止
 class MyApp extends StatefulWidget {
   const MyApp({Key? key}) : super(key: key);
 
@@ -183,6 +196,7 @@ class _MyAppState extends State<MyApp> {
         appBar: AppBar(title: const Text('Service App')),
         body: Column(
           children: [
+            ///透過資料流接收背景服務傳來的時間與裝置資訊
             StreamBuilder<Map<String, dynamic>?>(
               stream: FlutterBackgroundService().on('update'),
               builder: (context, snapshot) {
@@ -224,7 +238,7 @@ class _MyAppState extends State<MyApp> {
                 });
               },
             ),
-            const Expanded(child: LogView()),
+            const Expanded(child: LogView()),//顯示錯誤日誌（從 SharedPreferences 取得）
           ],
         ),
       ),
@@ -232,6 +246,7 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+///每秒更新一次錯誤日誌
 class LogView extends StatefulWidget {
   const LogView({Key? key}) : super(key: key);
 
@@ -271,6 +286,7 @@ class _LogViewState extends State<LogView> {
   }
 }
 
+///若通知權限沒開啟，顯示提示畫面與按鈕前往設定
 class PermissionDeniedApp extends StatelessWidget {
   const PermissionDeniedApp({super.key});
 
